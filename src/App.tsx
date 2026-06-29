@@ -14,7 +14,7 @@ import {
   audioBufferToMp3,
   audioBufferToWav
 } from './lib/audioProcessor';
-import { detectInconsistencies } from './lib/gemini';
+import { getWordLevelTranscript, detectRepetitions } from './lib/gemini';
 import type { GeminiRemoval } from './lib/gemini';
 
 function AppContent() {
@@ -31,12 +31,19 @@ function AppContent() {
   const [apiKey, setApiKey] = useState<string>('');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
 
+  // Raw audio buffer for Stage 2 cuts
+  const [rawAudioBuffer, setRawAudioBuffer] = useState<AudioBuffer | null>(null);
+
   // Silence-reduced results
   const [silenceReducedBuffer, setSilenceReducedBuffer] = useState<AudioBuffer | null>(null);
   const [silenceReducedUrl, setSilenceReducedUrl] = useState<string>('');
   const [silenceReducedWavBlob, setSilenceReducedWavBlob] = useState<Blob | null>(null);
   const [silenceReducedMp3Blob, setSilenceReducedMp3Blob] = useState<Blob | null>(null);
   const [silenceReducedDuration, setSilenceReducedDuration] = useState<number>(0);
+  
+  // Tracked cut segments for mapping and final stitching
+  const [silenceRemovals, setSilenceRemovals] = useState<{ start: number; end: number }[]>([]);
+  const [keepSegmentsState, setKeepSegmentsState] = useState<{ start: number; end: number }[]>([]);
 
   // AI-cleaned results
   const [aiCleanedUrl, setAiCleanedUrl] = useState<string | null>(null);
@@ -67,10 +74,14 @@ function AppContent() {
     try {
       setProcessingStage('Decoding audio file data (extracting track)...');
       const rawBuffer = await decodeAudioFile(file);
+      setRawAudioBuffer(rawBuffer);
       setOriginalDuration(rawBuffer.duration);
 
       setProcessingStage('Analyzing waveform and detecting silence thresholds...');
-      const { segments } = detectSilence(rawBuffer);
+      const { segments, silenceSegments } = detectSilence(rawBuffer);
+      
+      setSilenceRemovals(silenceSegments);
+      setKeepSegmentsState(segments);
       
       setProcessingStage('Stitching speech segments together (applying crossfades)...');
       const processedBuffer = await cutAudio(rawBuffer, segments);
@@ -97,7 +108,7 @@ function AppContent() {
   };
 
   const handleTriggerAiCleanup = async () => {
-    if (!silenceReducedBuffer) return;
+    if (!silenceReducedBuffer || !rawAudioBuffer) return;
     if (!apiKey) {
       setIsApiKeyModalOpen(true);
       return;
@@ -107,39 +118,96 @@ function AppContent() {
     setIsAiProcessing(true);
 
     try {
-      // Calls Gemini 2.5 Flash API to find inconsistencies
-      const removals = await detectInconsistencies(
-        silenceReducedBuffer, 
-        apiKey, 
+      setProcessingStage('Starting Gemini AI transcription...');
+      
+      // 1. Transcribe the silence-reduced audio to get word-level timestamps
+      const words = await getWordLevelTranscript(
+        silenceReducedBuffer,
+        apiKey,
         (stage) => setProcessingStage(stage)
       );
 
-      setProcessingStage('Stitching audio around detected inconsistencies...');
-      
-      // Invert the removals list to find what regions we need to KEEP
-      const totalDuration = silenceReducedBuffer.duration;
-      const sortedRemovals = [...removals].sort((a, b) => a.start - b.start);
+      setProcessingStage('Mapping AI timestamps to original timeline...');
+
+      // Helper to map silence-reduced timeline back to the original timeline
+      const mapReducedTimeToOriginal = (t: number) => {
+        const crossfade = 0.01;
+        let accumulated = 0;
+        for (let idx = 0; idx < keepSegmentsState.length; idx++) {
+          const seg = keepSegmentsState[idx];
+          const reducedStart = idx === 0 ? 0 : accumulated - crossfade;
+          const duration = seg.end - seg.start;
+          accumulated = reducedStart + duration;
+
+          if (t >= reducedStart && t <= accumulated) {
+            return seg.start + (t - reducedStart);
+          }
+        }
+        return t;
+      };
+
+      // Map words back to original timeline
+      const absoluteWords = words.map(w => ({
+        word: w.word,
+        startTime: mapReducedTimeToOriginal(w.startTime),
+        endTime: mapReducedTimeToOriginal(w.endTime),
+      }));
+
+      // 2. Perform local word-level repetition detection
+      const repetitionRemovals = detectRepetitions(absoluteWords);
+
+      setProcessingStage('Combining silence and repetition cuts...');
+
+      // Combine silence removals and repetition removals relative to original timeline
+      const combinedRemovals = [
+        ...silenceRemovals.map(r => ({
+          start: r.start,
+          end: r.end,
+          text: 'Silent pause / dead air',
+          reason: 'silence' as const
+        })),
+        ...repetitionRemovals
+      ];
+
+      // Sort and merge removals to handle overlaps
+      const sortedRemovals = [...combinedRemovals].sort((a, b) => a.start - b.start);
+      const mergedRemovals: { start: number; end: number }[] = [];
+      if (sortedRemovals.length > 0) {
+        let current = { start: sortedRemovals[0].start, end: sortedRemovals[0].end };
+        for (let idx = 1; idx < sortedRemovals.length; idx++) {
+          const next = sortedRemovals[idx];
+          if (next.start <= current.end) {
+            current.end = Math.max(current.end, next.end);
+          } else {
+            mergedRemovals.push(current);
+            current = { start: next.start, end: next.end };
+          }
+        }
+        mergedRemovals.push(current);
+      }
+
+      // Invert merged removals to find the regions to KEEP from the original raw buffer
       const keepSegments: { start: number; end: number }[] = [];
       let current = 0;
-
-      for (const rem of sortedRemovals) {
-        if (rem.start > current + 0.05) {
+      for (const rem of mergedRemovals) {
+        if (rem.start > current + 0.01) { // 10ms minimum speech segment
           keepSegments.push({ start: current, end: rem.start });
         }
         current = Math.max(current, rem.end);
       }
-
-      if (current < totalDuration - 0.05) {
-        keepSegments.push({ start: current, end: totalDuration });
+      if (current < rawAudioBuffer.duration - 0.01) {
+        keepSegments.push({ start: current, end: rawAudioBuffer.duration });
       }
 
-      // If everything was removed (highly unlikely unless instructions read wrong),
-      // keep a tiny silent segment or fallback to entire silenceReducedBuffer
+      setProcessingStage('Applying final cuts and stitching audio (single pass)...');
+
+      // 3. Perform a SINGLE cut pass on the rawAudioBuffer
       let cleanedBuffer: AudioBuffer;
       if (keepSegments.length === 0) {
-        cleanedBuffer = silenceReducedBuffer;
+        // Fallback to avoid empty output
+        cleanedBuffer = rawAudioBuffer;
       } else {
-        cleanedBuffer = await cutAudio(silenceReducedBuffer, keepSegments);
+        cleanedBuffer = await cutAudio(rawAudioBuffer, keepSegments);
       }
 
       setProcessingStage('Encoding final Smart-Cleaned audio to MP3...');
@@ -153,15 +221,15 @@ function AppContent() {
       setAiCleanedWavBlob(wavBlob);
 
       setAiCleanedDuration(cleanedBuffer.duration);
-      setAiRemovals(removals);
+      
+      // Store all combined removals so they show up in the results collapsible panel
+      setAiRemovals(combinedRemovals);
 
-      toast('Inconsistencies and false starts removed!', 'success');
+      toast('Silence and repetitions successfully cleaned!', 'success');
       setStatus('result');
     } catch (error: any) {
       console.error(error);
       toast(error?.message || 'Failed to analyze audio with AI. Keeping silence-reduced version.', 'error');
-      
-      // Return to result screen so they don't lose the silence reduced output!
       setStatus('result');
     }
   };
@@ -186,11 +254,14 @@ function AppContent() {
     setFile(null);
     setOriginalDuration(0);
     setStatus('idle');
+    setRawAudioBuffer(null);
     setSilenceReducedBuffer(null);
     setSilenceReducedUrl('');
     setSilenceReducedWavBlob(null);
     setSilenceReducedMp3Blob(null);
     setSilenceReducedDuration(0);
+    setSilenceRemovals([]);
+    setKeepSegmentsState([]);
     
     setAiCleanedUrl(null);
     setAiCleanedWavBlob(null);

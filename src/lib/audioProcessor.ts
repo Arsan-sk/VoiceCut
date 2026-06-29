@@ -22,12 +22,46 @@ export async function decodeAudioFile(file: File): Promise<AudioBuffer> {
 }
 
 /**
- * Detects speech segments by analyzing the RMS energy of the audio.
- * Uses an adaptive threshold based on the noise floor of the recording.
+ * Slices an AudioBuffer from startSec to endSec.
+ */
+export function sliceAudioBuffer(
+  buffer: AudioBuffer,
+  startSec: number,
+  endSec: number
+): AudioBuffer {
+  const sampleRate = buffer.sampleRate;
+  const numChannels = buffer.numberOfChannels;
+  const startSample = Math.floor(startSec * sampleRate);
+  const endSample = Math.min(buffer.length, Math.floor(endSec * sampleRate));
+  const frameCount = Math.max(1, endSample - startSample);
+
+  const newBuffer = new AudioBuffer({
+    length: frameCount,
+    numberOfChannels: numChannels,
+    sampleRate: sampleRate
+  });
+
+  for (let c = 0; c < numChannels; c++) {
+    const origData = buffer.getChannelData(c);
+    const slicedData = origData.subarray(startSample, endSample);
+    newBuffer.copyToChannel(slicedData, c);
+  }
+
+  return newBuffer;
+}
+
+/**
+ * Detects silence and speech segments using the Precision Silence Detection algorithm.
+ * Returns both the speech segments to KEEP and the silence segments to REMOVE.
  */
 export function detectSilence(
-  audioBuffer: AudioBuffer
-): { segments: AudioSegment[]; threshold: number } {
+  audioBuffer: AudioBuffer,
+  options: {
+    minSilenceDuration?: number; // min duration of silence to cut (seconds)
+  } = {}
+): { segments: AudioSegment[]; silenceSegments: AudioSegment[] } {
+  const minSilence = options.minSilenceDuration ?? 0.02; // Keep natural spacing if < 20ms
+
   const sampleRate = audioBuffer.sampleRate;
   const data = audioBuffer.getChannelData(0); // Analyze mono track
 
@@ -35,10 +69,10 @@ export function detectSilence(
   const hopSize = Math.floor(0.01 * sampleRate);  // 10ms hops
   const numSamples = data.length;
 
-  const rmsList: number[] = [];
   const dbList: number[] = [];
+  const frameTimes: number[] = [];
 
-  // 1. Calculate RMS and dB for each frame
+  // 1. Calculate dB for each frame
   for (let offset = 0; offset + frameSize < numSamples; offset += hopSize) {
     let sum = 0;
     for (let i = 0; i < frameSize; i++) {
@@ -46,112 +80,102 @@ export function detectSilence(
       sum += val * val;
     }
     const rms = Math.sqrt(sum / frameSize);
-    rmsList.push(rms);
-
-    // Convert to dBFS
     const db = rms > 0 ? 20 * Math.log10(rms) : -100;
     dbList.push(db);
+    frameTimes.push(offset / sampleRate);
   }
 
-  // If we have no frames, return the whole audio
+  // If we have no frames, return the whole audio as speech
   if (dbList.length === 0) {
     return {
       segments: [{ start: 0, end: audioBuffer.duration }],
-      threshold: -40,
+      silenceSegments: [],
     };
   }
 
-  // 2. Estimate noise floor using 15th percentile of dB values
-  const sortedDbs = [...dbList].sort((a, b) => a - b);
-  const noiseFloorIdx = Math.floor(sortedDbs.length * 0.15);
-  const noiseFloor = sortedDbs[noiseFloorIdx];
+  // 2. Compute local adaptive thresholds continuously across the file
+  const thresholdList: number[] = [];
+  const windowRadius = 200; // ±2 seconds (200 frames of 10ms hop)
+  
+  for (let i = 0; i < dbList.length; i++) {
+    const startIdx = Math.max(0, i - windowRadius);
+    const endIdx = Math.min(dbList.length - 1, i + windowRadius);
+    
+    // Slice and sort the local window to find the local noise floor
+    const localDbs = dbList.slice(startIdx, endIdx + 1);
+    localDbs.sort((a, b) => a - b);
+    
+    const noiseFloorIdx = Math.floor(localDbs.length * 0.15);
+    const localNoiseFloor = localDbs[noiseFloorIdx];
+    
+    // Bounded adaptive speech threshold
+    let threshold = localNoiseFloor + 12;
+    if (threshold < -45) threshold = -45;
+    if (threshold > -25) threshold = -25;
+    
+    thresholdList.push(threshold);
+  }
 
-  // Threshold is noiseFloor + 12dB margin, bounded between -45dB and -25dB
-  let threshold = noiseFloor + 12;
-  if (threshold < -45) threshold = -45;
-  if (threshold > -25) threshold = -25;
+  // 3. Scan frame-by-frame for silenceStart and silenceEnd (Precision Silence Algorithm)
+  const silenceSegments: AudioSegment[] = [];
+  let inSilence = false;
+  let silenceStart = 0;
+  let silentFramesCount = 0;
 
-  // 3. Precision Silence Detection algorithm
-  const frameDuration = hopSize / sampleRate;
-  const cuts: AudioSegment[] = [];
-  const numFrames = dbList.length;
+  for (let i = 0; i < dbList.length; i++) {
+    const time = frameTimes[i];
+    const db = dbList[i];
+    const threshold = thresholdList[i];
 
-  let i = 0;
-  while (i < numFrames) {
-    if (dbList[i] < threshold) {
-      const potentialStartIdx = i;
-      const potentialStartTime = potentialStartIdx * frameDuration;
-
-      let j = i;
-      while (j < numFrames && dbList[j] < threshold) {
-        j++;
-      }
-
-      const silenceDuration = (j - potentialStartIdx) * frameDuration;
-
-      if (silenceDuration > 0.200) {
-        // Exceeds 200ms, mark that point as silenceStart (the cut-in anchor)
-        const silenceStart = potentialStartTime + 0.200;
-
-        // Scan forward frame-by-frame looking for the next voice uprise
-        let upriseIdx = j;
-        while (upriseIdx < numFrames && dbList[upriseIdx] < threshold) {
-          upriseIdx++;
-        }
-
-        let silenceEnd: number;
-        if (upriseIdx < numFrames) {
-          const upriseTime = upriseIdx * frameDuration;
-          silenceEnd = upriseTime - 0.200;
-        } else {
-          // If no uprise is found, silence extends to the end of the audio
-          silenceEnd = audioBuffer.duration;
-        }
-
-        if (silenceEnd > silenceStart) {
-          cuts.push({ start: silenceStart, end: silenceEnd });
-        }
-
-        // Resume scanning from silenceEnd forward, resetting the silence accumulator
-        const nextScanIdx = Math.floor(silenceEnd / frameDuration);
-        i = Math.max(i + 1, nextScanIdx);
-      } else {
-        i = Math.max(i + 1, j);
+    if (db < threshold) {
+      silentFramesCount++;
+      // If we accumulated more than 20ms of silence
+      if (!inSilence && (silentFramesCount * hopSize) / sampleRate >= 0.02) {
+        inSilence = true;
+        // The first frame of this silent block is our anchor
+        silenceStart = frameTimes[i - silentFramesCount + 1];
       }
     } else {
-      i++;
+      if (inSilence) {
+        // Voice uprise detected
+        const upriseTime = time;
+        const silenceEnd = upriseTime - 0.02; // Retain 20ms pre-uprise buffer
+
+        const netGap = silenceEnd - silenceStart;
+        // Do NOT cut if net gap is less than 20ms (which naturally includes the 5ms check)
+        if (netGap >= minSilence) {
+          silenceSegments.push({ start: silenceStart, end: silenceEnd });
+        }
+        inSilence = false;
+      }
+      silentFramesCount = 0;
     }
   }
 
-  // Convert the cuts to keep-segments relative to the total duration
-  const keepSegments: AudioSegment[] = [];
-  let current = 0;
-  // Sort cuts by start time
-  const sortedCuts = [...cuts].sort((a, b) => a.start - b.start);
-  for (const cut of sortedCuts) {
-    if (cut.start > current) {
-      keepSegments.push({ start: current, end: cut.start });
+  // Handle final open silence
+  if (inSilence) {
+    const silenceEnd = audioBuffer.duration;
+    if (silenceEnd - silenceStart >= minSilence) {
+      silenceSegments.push({ start: silenceStart, end: silenceEnd });
     }
-    current = cut.end;
-  }
-  if (current < audioBuffer.duration) {
-    keepSegments.push({ start: current, end: audioBuffer.duration });
   }
 
-  // Filter out extremely short keep-segments (pops/noise spikes)
-  const finalSegments = keepSegments.filter(seg => (seg.end - seg.start) >= 0.15);
-
-  // If everything was cut, return a tiny silent segment or original to prevent empty buffers
-  if (finalSegments.length === 0) {
-    return {
-      segments: [{ start: 0, end: Math.min(audioBuffer.duration, 0.5) }],
-      threshold,
-    };
+  // 4. Invert silence segments to get speech segments to KEEP
+  const speechSegments: AudioSegment[] = [];
+  let currentPos = 0;
+  for (const sil of silenceSegments) {
+    if (sil.start > currentPos + 0.01) { // 10ms min keep length
+      speechSegments.push({ start: currentPos, end: sil.start });
+    }
+    currentPos = sil.end;
+  }
+  if (currentPos < audioBuffer.duration - 0.01) {
+    speechSegments.push({ start: currentPos, end: audioBuffer.duration });
   }
 
   return {
-    segments: finalSegments,
-    threshold,
+    segments: speechSegments.length > 0 ? speechSegments : [{ start: 0, end: Math.min(audioBuffer.duration, 0.1) }],
+    silenceSegments,
   };
 }
 
@@ -164,20 +188,10 @@ export async function cutAudio(
 ): Promise<AudioBuffer> {
   const sampleRate = audioBuffer.sampleRate;
   const numChannels = audioBuffer.numberOfChannels;
-  const crossfadeDuration = 0.010; // 10ms crossfade (8-12ms range)
-  
+  const crossfadeDuration = 0.01; // 10ms crossfade
+
   if (segments.length === 0) {
     return audioBuffer;
-  }
-
-  // Create equal-power crossfade curves
-  const curveLength = 100;
-  const fadeInCurve = new Float32Array(curveLength);
-  const fadeOutCurve = new Float32Array(curveLength);
-  for (let i = 0; i < curveLength; i++) {
-    const fraction = i / (curveLength - 1);
-    fadeInCurve[i] = Math.sin(fraction * Math.PI / 2);
-    fadeOutCurve[i] = Math.cos(fraction * Math.PI / 2);
   }
 
   // Calculate the total destination duration
@@ -231,14 +245,16 @@ export async function cutAudio(
       // First segment starts at full volume
       gainNode.gain.setValueAtTime(1.0, 0);
     } else {
-      // Subsequent segments fade in (equal-power)
-      gainNode.gain.setValueCurveAtTime(fadeInCurve, playStartTime, crossfadeDuration);
+      // Subsequent segments fade in
+      gainNode.gain.setValueAtTime(0.0, playStartTime);
+      gainNode.gain.linearRampToValueAtTime(1.0, playStartTime + crossfadeDuration);
     }
 
-    // If it's not the last segment, we fade it out at the end (equal-power)
+    // If it's not the last segment, we fade it out at the end
     if (i < segments.length - 1) {
       const fadeOutStartTime = playStartTime + segDuration - crossfadeDuration;
-      gainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeOutStartTime, crossfadeDuration);
+      gainNode.gain.setValueAtTime(1.0, fadeOutStartTime);
+      gainNode.gain.linearRampToValueAtTime(0.0, fadeOutStartTime + crossfadeDuration);
     }
 
     // Update destination time tracker

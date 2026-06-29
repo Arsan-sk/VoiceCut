@@ -893,6 +893,11 @@ body {
   color: oklch(0.4 0.1 80);
 }
 
+.removal-badge.type-silence {
+  background-color: var(--color-muted-light);
+  color: var(--color-muted);
+}
+
 .removal-text {
   font-style: italic;
   color: var(--color-fg);
