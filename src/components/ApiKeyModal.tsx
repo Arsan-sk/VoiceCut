@@ -33,20 +33,36 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
         <div className="modal-header">
           <div className="modal-title-wrapper">
             <Key className="modal-title-icon" size={20} />
-            <h3 className="modal-title">Enter Gemini API Key</h3>
+            <h3 className="modal-title">Configure AI Inconsistency Removal</h3>
           </div>
           <button className="modal-close-btn" onClick={onClose}>×</button>
         </div>
 
         <form onSubmit={handleSubmit} className="modal-form">
           <p className="modal-description">
-            To remove speech inconsistencies (like false starts and duplicates), we use the Gemini 2.5 Flash model directly from your browser.
+            Enhance your recording by automatically removing spoken stumbles, false starts, and duplicates using the Gemini 2.5 Flash API directly from your browser.
           </p>
+
+          <div className="modal-example-box">
+            <span className="example-badge">Example of what is removed:</span>
+            <div className="example-comparison">
+              <div className="example-before">
+                <span className="label-red">Before:</span>
+                <span className="speech-text">
+                  "We went to the... <span className="highlight-cut">we decided to go</span> to the park because, <span className="highlight-cut">you know, because</span> it was sunny."
+                </span>
+              </div>
+              <div className="example-after">
+                <span className="label-green">After:</span>
+                <span className="speech-text">"We decided to go to the park because it was sunny."</span>
+              </div>
+            </div>
+          </div>
 
           <div className="api-key-info-box">
             <div className="info-badge">100% Free & Secure</div>
             <p>
-              Your key is saved <strong>only inside your browser's local storage</strong>. It is never uploaded to our servers.
+              Your key is saved <strong>locally in your browser</strong>. It is never uploaded to our servers.
             </p>
             <a 
               href="https://aistudio.google.com/" 
@@ -96,7 +112,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               Cancel
             </button>
             <button type="submit" className="btn btn-primary">
-              Save Key & Proceed
+              Proceed
             </button>
           </div>
         </form>

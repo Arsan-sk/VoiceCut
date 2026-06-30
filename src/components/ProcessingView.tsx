@@ -3,11 +3,13 @@ import React from 'react';
 interface ProcessingViewProps {
   currentStage: string;
   isAiProcessing?: boolean;
+  stepIndex: number;
 }
 
 export const ProcessingView: React.FC<ProcessingViewProps> = ({ 
   currentStage, 
-  isAiProcessing = false 
+  isAiProcessing = false,
+  stepIndex
 }) => {
   // Define stages based on mode
   const stages = isAiProcessing 
@@ -24,43 +26,9 @@ export const ProcessingView: React.FC<ProcessingViewProps> = ({
         { key: 'encoding', label: 'Encoding Output' }
       ];
 
-  const getStageStatus = (stageKey: string) => {
-    const currentLower = currentStage.toLowerCase();
-    
-    if (isAiProcessing) {
-      if (stageKey === 'compressing') {
-        if (currentLower.includes('compress') || currentLower.includes('convert')) return 'active';
-        if (currentLower.includes('sending') || currentLower.includes('api') || currentLower.includes('cutt') || currentLower.includes('encod') || currentLower.includes('sav')) return 'completed';
-      }
-      if (stageKey === 'api') {
-        if (currentLower.includes('send') || currentLower.includes('api') || currentLower.includes('analy')) return 'active';
-        if (currentLower.includes('cutt') || currentLower.includes('encod') || currentLower.includes('sav')) return 'completed';
-      }
-      if (stageKey === 'cutting') {
-        if (currentLower.includes('cutt')) return 'active';
-        if (currentLower.includes('encod') || currentLower.includes('sav')) return 'completed';
-      }
-      if (stageKey === 'encoding') {
-        if (currentLower.includes('encod') || currentLower.includes('sav') || currentLower.includes('mp3') || currentLower.includes('wav')) return 'active';
-      }
-    } else {
-      if (stageKey === 'decoding') {
-        if (currentLower.includes('decod')) return 'active';
-        if (currentLower.includes('analyz') || currentLower.includes('cutt') || currentLower.includes('encod')) return 'completed';
-      }
-      if (stageKey === 'analyzing') {
-        if (currentLower.includes('analyz') || currentLower.includes('detect')) return 'active';
-        if (currentLower.includes('cutt') || currentLower.includes('encod')) return 'completed';
-      }
-      if (stageKey === 'cutting') {
-        if (currentLower.includes('cutt') || currentLower.includes('stitch')) return 'active';
-        if (currentLower.includes('encod')) return 'completed';
-      }
-      if (stageKey === 'encoding') {
-        if (currentLower.includes('encod')) return 'active';
-      }
-    }
-    
+  const getStageStatus = (stageIdx: number) => {
+    if (stageIdx < stepIndex) return 'completed';
+    if (stageIdx === stepIndex) return 'active';
     return 'pending';
   };
 
@@ -81,11 +49,17 @@ export const ProcessingView: React.FC<ProcessingViewProps> = ({
 
       <div className="processing-steps">
         {stages.map((stage, idx) => {
-          const status = getStageStatus(stage.key);
+          const status = getStageStatus(idx + 1); // 1-based index
           return (
             <div key={stage.key} className={`processing-step-item ${status}`}>
               <div className="step-number-circle">
-                {status === 'completed' ? '✓' : idx + 1}
+                {status === 'completed' ? (
+                  <svg className="step-check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : (
+                  idx + 1
+                )}
               </div>
               <span className="step-label">{stage.label}</span>
             </div>

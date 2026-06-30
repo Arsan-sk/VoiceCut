@@ -3,7 +3,6 @@ import {
   Download, 
   Sparkles, 
   RefreshCw, 
-  CheckCircle,
   ChevronDown,
   ChevronUp,
   FileCheck
@@ -165,118 +164,96 @@ export const ResultView: React.FC<ResultViewProps> = ({
             Download WAV
           </button>
         </div>
-      </div>
-
-      {/* 3. Smart AI Inconsistency Removal (Only show if not already run) */}
-      {!isAiDone && (
-        <div className="ai-upgrade-card">
-          <div className="ai-upgrade-header">
-            <Sparkles className="sparkles-icon" size={24} />
-            <div>
-              <h3 className="ai-card-title">Smart AI Inconsistency Removal</h3>
-              <p className="ai-card-subtitle">Take your audio to the next level by cutting spoken mistakes</p>
-            </div>
-          </div>
-
-          <div className="ai-example-box">
-            <span className="example-badge">Example of what we remove:</span>
-            <div className="example-comparison">
-              <div className="example-before">
-                <span className="label-red">Before:</span>
-                <span className="speech-text">
-                  "We went to the... <span className="highlight-cut">we decided to go</span> to the park because, <span className="highlight-cut">you know, because</span> it was sunny."
-                </span>
-              </div>
-              <div className="example-after">
-                <span className="label-green">After:</span>
-                <span className="speech-text">"We decided to go to the park because it was sunny."</span>
-              </div>
-            </div>
-            <p className="example-explanation">
-              Using the Gemini 2.5 Flash API, VoiceCut detects <strong>false starts</strong>, <strong>repeated words</strong>, and <strong>incoherent speech stumbles</strong> to create a smooth, studio-like narration.
-            </p>
-          </div>
-
-          <div className="ai-action-area">
-            {apiKey ? (
-              <div className="api-key-status">
-                <div className="key-active-badge">
-                  <CheckCircle size={14} className="badge-icon-check" />
-                  API Key Configured
-                </div>
-                <button className="change-key-btn" onClick={onOpenApiKeyModal}>
-                  Change API Key
-                </button>
-              </div>
-            ) : (
-              <p className="api-key-cta-text">
-                Uses your free Gemini API Key. No signup required.
-              </p>
-            )}
-
+        
+        {!isAiDone && (
+          <div className="ai-trigger-container">
             <button 
-              className="btn btn-upgrade btn-large btn-icon"
-              onClick={apiKey ? onTriggerAiCleanup : onOpenApiKeyModal}
+              className="btn btn-upgrade btn-large btn-icon btn-full-width"
+              onClick={apiKey ? () => onTriggerAiCleanup() : onOpenApiKeyModal}
             >
               <Sparkles size={16} />
               Remove Inconsistencies & False Starts
             </button>
+            {apiKey && (
+              <div className="api-key-status-inline">
+                <span className="key-configured-label">✓ API Key Configured</span>
+                <button className="change-key-btn" onClick={onOpenApiKeyModal}>
+                  Change Key
+                </button>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* 4. AI Removed Items Panel (Only show if AI cleanup was executed) */}
-      {isAiDone && aiRemovals && (
-        <div className="removals-list-card">
-          <button 
-            className="removals-header-toggle"
-            onClick={() => setShowRemovalsList(!showRemovalsList)}
-          >
-            <div className="removals-title-wrapper">
-              <Sparkles size={16} className="removals-sparkle-icon" />
-              <span>AI Smart-Cleanup Review ({aiRemovals.length} cuts made)</span>
-            </div>
-            {showRemovalsList ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
+      {isAiDone && aiRemovals && (() => {
+        const silenceCuts = aiRemovals.filter(r => r.reason === 'silence');
+        const repetitionCuts = aiRemovals.filter(r => r.reason === 'repetition' || r.reason === 'repetition-partial');
+        const silenceTotalTime = silenceCuts.reduce((sum, r) => sum + Math.max(0, r.end - r.start), 0);
+        const repTotalTime = repetitionCuts.reduce((sum, r) => sum + Math.max(0, r.end - r.start), 0);
 
-          {showRemovalsList && (
-            <div className="removals-body">
-              {aiRemovals.length === 0 ? (
-                <div className="empty-removals">
-                  No speech inconsistencies or repetitions were found in this audio file. Your recording was already clean!
+        return (
+          <div className="removals-list-card">
+            <button 
+              className="removals-header-toggle"
+              onClick={() => setShowRemovalsList(!showRemovalsList)}
+            >
+              <div className="removals-title-wrapper">
+                <Sparkles size={16} className="removals-sparkle-icon" />
+                <span>AI Smart-Cleanup Review</span>
+              </div>
+              {showRemovalsList ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </button>
+
+            {showRemovalsList && (
+              <div className="removals-body">
+                {/* Summary Line */}
+                <div className="removals-summary-line">
+                  <span>Removed <strong>{silenceCuts.length}</strong> silence gaps ({formatDuration(silenceTotalTime)})</span>
+                  {repetitionCuts.length > 0 && (
+                    <span> + <strong>{repetitionCuts.length}</strong> repeated phrases ({formatDuration(repTotalTime)})</span>
+                  )}
                 </div>
-              ) : (
-                <div className="removals-table-wrapper">
-                  <table className="removals-table">
-                    <thead>
-                      <tr>
-                        <th>Time</th>
-                        <th>Type</th>
-                        <th>Removed Speech Segment</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {aiRemovals.map((removal, idx) => (
-                        <tr key={idx}>
-                          <td className="removal-time">
-                            {formatDuration(removal.start)} – {formatDuration(removal.end)}
-                          </td>
-                          <td className="removal-badge-cell">
-                            <span className={`removal-badge type-${removal.reason.replace(' ', '-')}`}>
-                              {removal.reason}
-                            </span>
-                          </td>
-                          <td className="removal-text">"{removal.text}"</td>
+
+                {/* Repetition rows only */}
+                {repetitionCuts.length > 0 ? (
+                  <div className="removals-table-wrapper">
+                    <table className="removals-table">
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>Type</th>
+                          <th>Removed Text</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+                      </thead>
+                      <tbody>
+                        {repetitionCuts.map((removal, idx) => (
+                          <tr key={idx}>
+                            <td className="removal-time">
+                              {formatDuration(removal.start)} – {formatDuration(removal.end)}
+                            </td>
+                            <td className="removal-badge-cell">
+                              <span className={`removal-badge type-${removal.reason}`}>
+                                {removal.reason === 'repetition' ? 'exact repeat' : 'similar phrase'}
+                              </span>
+                            </td>
+                            <td className="removal-text">"{removal.text}"</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="empty-removals">
+                    No repeated phrases or false starts were detected. Only silence gaps were removed.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* API Key management at bottom if AI has already run */}
       {isAiDone && (

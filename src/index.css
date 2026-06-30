@@ -175,6 +175,11 @@ body {
   transition: all 0.2s ease;
 }
 
+.btn:active {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: none !important;
+}
+
 .btn-primary {
   background-color: var(--color-accent);
   color: white;
@@ -514,16 +519,37 @@ body {
   color: white;
 }
 
+.step-check-icon {
+  width: 14px;
+  height: 14px;
+  color: white;
+  display: block;
+}
+
 .processing-step-item.completed .step-label {
   color: var(--color-fg);
 }
 
 .processing-step-item.active .step-number-circle {
+  position: relative;
   background-color: var(--color-accent-muted);
-  border-color: var(--color-accent);
+  border-color: transparent;
   color: var(--color-accent);
   transform: scale(1.1);
-  box-shadow: 0 0 10px rgba(229, 83, 59, 0.2);
+  box-shadow: 0 0 10px rgba(229, 83, 59, 0.1);
+}
+
+.processing-step-item.active .step-number-circle::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border: 2px solid transparent;
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 1s infinite linear;
 }
 
 .processing-step-item.active .step-label {
@@ -954,6 +980,24 @@ body {
   color: var(--color-muted);
 }
 
+.removal-badge.type-repetition-partial {
+  background-color: oklch(0.95 0.04 290); /* Soft purple */
+  color: oklch(0.4 0.12 290);
+}
+
+.removals-summary-line {
+  padding: 1rem 1.5rem;
+  font-size: 0.95rem;
+  color: var(--color-fg);
+  border-bottom: 1px solid var(--color-border);
+  background-color: oklch(0.99 0.0 60);
+}
+
+.removals-summary-line strong {
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
 .removal-text {
   font-style: italic;
   color: var(--color-fg);
@@ -1363,4 +1407,102 @@ body {
     gap: 3rem;
     margin-top: 3.5rem;
   }
+}
+
+/* Full width Remove Inconsistencies button and Key configuration inline styles */
+.ai-trigger-container {
+  width: 100%;
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.btn-full-width {
+  width: 100%;
+  justify-content: center;
+  margin-top: 0.5rem;
+}
+
+.api-key-status-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.key-configured-label {
+  color: #10B981; /* emerald/green for configured state */
+  font-weight: 600;
+}
+
+.change-key-btn {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font-weight: 500;
+  padding: 0;
+}
+
+.change-key-btn:hover {
+  color: #c93d25;
+}
+
+/* Modal example comparison boxes */
+.modal-example-box {
+  background-color: var(--color-accent-muted);
+  border: 1px solid rgba(229, 83, 59, 0.15);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+  text-align: left;
+}
+
+.example-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.05em;
+}
+
+.example-comparison {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.example-before, .example-after {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--color-fg);
+}
+
+.label-red {
+  color: #EF4444;
+  font-weight: 700;
+  margin-right: 0.5rem;
+}
+
+.label-green {
+  color: #10B981;
+  font-weight: 700;
+  margin-right: 0.5rem;
+}
+
+.speech-text {
+  font-style: italic;
+}
+
+.highlight-cut {
+  background-color: rgba(239, 68, 68, 0.15);
+  text-decoration: line-through;
+  color: #EF4444;
+  padding: 0 2px;
+  border-radius: 3px;
 }

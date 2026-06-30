@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { ToastProvider, useToast } from './components/Toast';
 import { Dropzone } from './components/Dropzone';
 import { FileSummary } from './components/FileSummary';
@@ -13,7 +13,7 @@ import {
   audioBufferToMp3,
   audioBufferToWav
 } from './lib/audioProcessor';
-import { getWordLevelTranscript, detectRepetitions } from './lib/gemini';
+import { getWordLevelTranscript, detectRepetitions, alignRemovalToWords } from './lib/gemini';
 import type { GeminiRemoval } from './lib/gemini';
 
 function AppContent() {
@@ -25,9 +25,16 @@ function AppContent() {
   const [status, setStatus] = useState<'idle' | 'summary' | 'processing' | 'result'>('idle');
   const [processingStage, setProcessingStage] = useState<string>('');
   const [isAiProcessing, setIsAiProcessing] = useState<boolean>(false);
+  const [processingStepIndex, setProcessingStepIndex] = useState<number>(1);
   
   // API Key state
-  const [apiKey, setApiKey] = useState<string>('');
+  const [apiKey, setApiKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem('gemini_api_key') || '';
+    } catch {
+      return '';
+    }
+  });
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
 
   // Raw audio buffer for Stage 2 cuts
@@ -50,14 +57,6 @@ function AppContent() {
   const [aiCleanedDuration, setAiCleanedDuration] = useState<number | null>(null);
   const [aiRemovals, setAiRemovals] = useState<GeminiRemoval[] | null>(null);
 
-  // Load API Key on mount
-  useEffect(() => {
-    const savedKey = localStorage.getItem('gemini_api_key');
-    if (savedKey) {
-      setApiKey(savedKey);
-    }
-  }, []);
-
   const handleFileSelected = (selectedFile: File) => {
     setFile(selectedFile);
     setStatus('summary');
@@ -68,6 +67,7 @@ function AppContent() {
 
     setStatus('processing');
     setIsAiProcessing(false);
+    setProcessingStepIndex(1);
     
     try {
       setProcessingStage('Decoding audio file data (extracting track)...');
@@ -75,16 +75,20 @@ function AppContent() {
       setRawAudioBuffer(rawBuffer);
       setOriginalDuration(rawBuffer.duration);
 
+      setProcessingStepIndex(2);
       setProcessingStage('Analyzing waveform and detecting silence thresholds...');
       const { segments, silenceSegments } = detectSilence(rawBuffer);
       
       setSilenceRemovals(silenceSegments);
+      console.log(`[Pipeline] Silence detection: ${silenceSegments.length} segments detected, keep segments count: ${segments.length}`);
       
+      setProcessingStepIndex(3);
       setProcessingStage('Stitching speech segments together (applying crossfades)...');
       const processedBuffer = await cutAudio(rawBuffer, segments);
       setSilenceReducedBuffer(processedBuffer);
       setSilenceReducedDuration(processedBuffer.duration);
 
+      setProcessingStepIndex(4);
       setProcessingStage('Encoding processed audio to high-quality MP3...');
       const mp3Blob = audioBufferToMp3(processedBuffer, 192);
       const mp3Url = URL.createObjectURL(mp3Blob);
@@ -104,35 +108,54 @@ function AppContent() {
     }
   };
 
-  const handleTriggerAiCleanup = async () => {
+  const handleTriggerAiCleanup = async (overrideApiKey?: string | React.MouseEvent) => {
     if (!silenceReducedBuffer || !rawAudioBuffer) return;
-    if (!apiKey) {
+    const activeKey = (typeof overrideApiKey === 'string' && overrideApiKey)
+      ? overrideApiKey
+      : (apiKey || localStorage.getItem('gemini_api_key') || '');
+    console.log('[Pipeline] handleTriggerAiCleanup API Key:', activeKey ? 'PRESENT (starts with ' + activeKey.substring(0, 6) + ')' : 'MISSING');
+    if (!activeKey) {
       setIsApiKeyModalOpen(true);
       return;
     }
 
     setStatus('processing');
     setIsAiProcessing(true);
+    setProcessingStepIndex(1);
 
     try {
+      setProcessingStage('Compressing audio for transmission...');
+      
+      setProcessingStepIndex(2);
       setProcessingStage('Starting Gemini AI transcription...');
       
-      // Transcription must run on silence-removed audio, not original — see [ticket/task reference] so this doesn't regress later.
-      const words = await getWordLevelTranscript(
+      // Analyze silence-removed audio to get verbatim words and inconsistency/repetition removals
+      const { words, removals: geminiRemovals } = await getWordLevelTranscript(
         silenceReducedBuffer,
-        apiKey,
+        activeKey,
         (stage) => setProcessingStage(stage)
       );
 
+      console.log(`[Pipeline] Transcript received: ${words.length} words. Gemini removals: ${geminiRemovals.length}`, geminiRemovals.slice(0, 10));
+
+      setProcessingStepIndex(3);
       setProcessingStage('Running repetition detection...');
 
-      // 2. Perform local word-level repetition detection (timestamps are relative to silence-removed timeline)
-      const repetitionRemovals = detectRepetitions(words);
+      // 1. Perform local word-level repetition/stumble/filler detection
+      const localRemovals = detectRepetitions(words);
+      console.log(`[Pipeline] Local repetitions/fillers detected: ${localRemovals.length}`, localRemovals);
 
-      setProcessingStage('Applying repetition cuts (sequential pass)...');
+      // 2. Align Gemini removals to precise word boundaries using the transcript
+      const alignedGeminiRemovals = geminiRemovals.map(rem => alignRemovalToWords(rem, words));
+      console.log(`[Pipeline] Aligned Gemini removals: ${alignedGeminiRemovals.length}`, alignedGeminiRemovals);
 
-      // Sort and merge repetition removals relative to silence-removed timeline
-      const sortedRemovals = [...repetitionRemovals].sort((a, b) => a.start - b.start);
+      // 3. Combine both lists of removals
+      const combinedCuts = [...alignedGeminiRemovals, ...localRemovals];
+
+      setProcessingStage('Applying cuts (sequential pass)...');
+
+      // Sort and merge removals relative to silence-removed timeline
+      const sortedRemovals = [...combinedCuts].sort((a, b) => a.start - b.start);
       const mergedRemovals: { start: number; end: number }[] = [];
       if (sortedRemovals.length > 0) {
         let current = { start: sortedRemovals[0].start, end: sortedRemovals[0].end };
@@ -161,7 +184,9 @@ function AppContent() {
         keepSegments.push({ start: current, end: silenceReducedBuffer.duration });
       }
 
-      // 3. Apply repetition cuts directly to the silence-removed buffer
+      console.log(`[Pipeline] Keep segments: ${keepSegments.length}, merged removals: ${mergedRemovals.length}`);
+
+      // 4. Apply cuts directly to the silence-removed buffer
       let cleanedBuffer: AudioBuffer;
       if (keepSegments.length === 0) {
         cleanedBuffer = silenceReducedBuffer;
@@ -169,6 +194,7 @@ function AppContent() {
         cleanedBuffer = await cutAudio(silenceReducedBuffer, keepSegments);
       }
 
+      setProcessingStepIndex(4);
       setProcessingStage('Encoding final Smart-Cleaned audio to MP3...');
       const mp3Blob = audioBufferToMp3(cleanedBuffer, 192);
       const mp3Url = URL.createObjectURL(mp3Blob);
@@ -182,16 +208,18 @@ function AppContent() {
       setAiCleanedDuration(cleanedBuffer.duration);
       
       // Store all combined removals so they show up in the results collapsible panel
-      const combinedRemovals = [
+      const combinedRemovalsForPanel: GeminiRemoval[] = [
         ...silenceRemovals.map(r => ({
           start: r.start,
           end: r.end,
           text: 'Silent pause / dead air',
           reason: 'silence' as const
         })),
-        ...repetitionRemovals
+        ...alignedGeminiRemovals,
+        ...localRemovals
       ];
-      setAiRemovals(combinedRemovals);
+      console.log(`[Pipeline] Combined panel removals: ${combinedRemovalsForPanel.length} (${silenceRemovals.length} silence + ${alignedGeminiRemovals.length} Gemini + ${localRemovals.length} local)`);
+      setAiRemovals(combinedRemovalsForPanel);
 
       toast('Silence and repetitions successfully cleaned!', 'success');
       setStatus('result');
@@ -206,6 +234,7 @@ function AppContent() {
     localStorage.setItem('gemini_api_key', key);
     setApiKey(key);
     toast('API Key saved successfully!', 'success');
+    handleTriggerAiCleanup(key);
   };
 
   const handleClearApiKey = () => {
@@ -305,6 +334,7 @@ function AppContent() {
           <ProcessingView 
             currentStage={processingStage} 
             isAiProcessing={isAiProcessing} 
+            stepIndex={processingStepIndex}
           />
         )}
 
