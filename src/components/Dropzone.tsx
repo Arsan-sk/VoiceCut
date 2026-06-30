@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Upload } from 'lucide-react';
+import { ArrowUp } from 'lucide-react';
 import { useToast } from './Toast';
 
 interface DropzoneProps {
@@ -83,24 +83,19 @@ export const Dropzone: React.FC<DropzoneProps> = ({ onFileSelected }) => {
       
       <div className="dropzone-content">
         <div className="upload-icon-wrapper">
-          <Upload className="upload-icon" size={32} />
+          <ArrowUp className="upload-icon" size={24} />
         </div>
         
-        <h2 className="dropzone-title">
+        <p className="dropzone-title font-display text-2xl sm:text-3xl text-ink">
           Drop your recording here
-        </h2>
-        <p className="dropzone-subtitle">
+        </p>
+        <p className="dropzone-subtitle mt-2 text-sm text-ink-muted">
           or click to choose a file from your device
         </p>
         
         <button type="button" className="btn btn-primary" onClick={onButtonClick}>
-          Select File
+          Select file
         </button>
-        
-        <div className="supported-formats">
-          <span>MP3 · WAV · M4A · MP4 (Audio Extract)</span>
-          <span className="max-size-hint">Up to 100 MB</span>
-        </div>
       </div>
     </div>
   );

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { ShieldCheck } from 'lucide-react';
 import { ToastProvider, useToast } from './components/Toast';
 import { Dropzone } from './components/Dropzone';
 import { FileSummary } from './components/FileSummary';
@@ -43,7 +42,6 @@ function AppContent() {
   
   // Tracked cut segments for mapping and final stitching
   const [silenceRemovals, setSilenceRemovals] = useState<{ start: number; end: number }[]>([]);
-  const [keepSegmentsState, setKeepSegmentsState] = useState<{ start: number; end: number }[]>([]);
 
   // AI-cleaned results
   const [aiCleanedUrl, setAiCleanedUrl] = useState<string | null>(null);
@@ -81,7 +79,6 @@ function AppContent() {
       const { segments, silenceSegments } = detectSilence(rawBuffer);
       
       setSilenceRemovals(silenceSegments);
-      setKeepSegmentsState(segments);
       
       setProcessingStage('Stitching speech segments together (applying crossfades)...');
       const processedBuffer = await cutAudio(rawBuffer, segments);
@@ -120,57 +117,22 @@ function AppContent() {
     try {
       setProcessingStage('Starting Gemini AI transcription...');
       
-      // 1. Transcribe the silence-reduced audio to get word-level timestamps
+      // Transcription must run on silence-removed audio, not original — see [ticket/task reference] so this doesn't regress later.
       const words = await getWordLevelTranscript(
         silenceReducedBuffer,
         apiKey,
         (stage) => setProcessingStage(stage)
       );
 
-      setProcessingStage('Mapping AI timestamps to original timeline...');
+      setProcessingStage('Running repetition detection...');
 
-      // Helper to map silence-reduced timeline back to the original timeline
-      const mapReducedTimeToOriginal = (t: number) => {
-        const crossfade = 0.01;
-        let accumulated = 0;
-        for (let idx = 0; idx < keepSegmentsState.length; idx++) {
-          const seg = keepSegmentsState[idx];
-          const reducedStart = idx === 0 ? 0 : accumulated - crossfade;
-          const duration = seg.end - seg.start;
-          accumulated = reducedStart + duration;
+      // 2. Perform local word-level repetition detection (timestamps are relative to silence-removed timeline)
+      const repetitionRemovals = detectRepetitions(words);
 
-          if (t >= reducedStart && t <= accumulated) {
-            return seg.start + (t - reducedStart);
-          }
-        }
-        return t;
-      };
+      setProcessingStage('Applying repetition cuts (sequential pass)...');
 
-      // Map words back to original timeline
-      const absoluteWords = words.map(w => ({
-        word: w.word,
-        startTime: mapReducedTimeToOriginal(w.startTime),
-        endTime: mapReducedTimeToOriginal(w.endTime),
-      }));
-
-      // 2. Perform local word-level repetition detection
-      const repetitionRemovals = detectRepetitions(absoluteWords);
-
-      setProcessingStage('Combining silence and repetition cuts...');
-
-      // Combine silence removals and repetition removals relative to original timeline
-      const combinedRemovals = [
-        ...silenceRemovals.map(r => ({
-          start: r.start,
-          end: r.end,
-          text: 'Silent pause / dead air',
-          reason: 'silence' as const
-        })),
-        ...repetitionRemovals
-      ];
-
-      // Sort and merge removals to handle overlaps
-      const sortedRemovals = [...combinedRemovals].sort((a, b) => a.start - b.start);
+      // Sort and merge repetition removals relative to silence-removed timeline
+      const sortedRemovals = [...repetitionRemovals].sort((a, b) => a.start - b.start);
       const mergedRemovals: { start: number; end: number }[] = [];
       if (sortedRemovals.length > 0) {
         let current = { start: sortedRemovals[0].start, end: sortedRemovals[0].end };
@@ -186,28 +148,25 @@ function AppContent() {
         mergedRemovals.push(current);
       }
 
-      // Invert merged removals to find the regions to KEEP from the original raw buffer
+      // Invert merged removals to find the regions to KEEP from the silence-removed buffer
       const keepSegments: { start: number; end: number }[] = [];
       let current = 0;
       for (const rem of mergedRemovals) {
-        if (rem.start > current + 0.01) { // 10ms minimum speech segment
+        if (rem.start > current + 0.01) { // 10ms minimum keep length
           keepSegments.push({ start: current, end: rem.start });
         }
         current = Math.max(current, rem.end);
       }
-      if (current < rawAudioBuffer.duration - 0.01) {
-        keepSegments.push({ start: current, end: rawAudioBuffer.duration });
+      if (current < silenceReducedBuffer.duration - 0.01) {
+        keepSegments.push({ start: current, end: silenceReducedBuffer.duration });
       }
 
-      setProcessingStage('Applying final cuts and stitching audio (single pass)...');
-
-      // 3. Perform a SINGLE cut pass on the rawAudioBuffer
+      // 3. Apply repetition cuts directly to the silence-removed buffer
       let cleanedBuffer: AudioBuffer;
       if (keepSegments.length === 0) {
-        // Fallback to avoid empty output
-        cleanedBuffer = rawAudioBuffer;
+        cleanedBuffer = silenceReducedBuffer;
       } else {
-        cleanedBuffer = await cutAudio(rawAudioBuffer, keepSegments);
+        cleanedBuffer = await cutAudio(silenceReducedBuffer, keepSegments);
       }
 
       setProcessingStage('Encoding final Smart-Cleaned audio to MP3...');
@@ -223,6 +182,15 @@ function AppContent() {
       setAiCleanedDuration(cleanedBuffer.duration);
       
       // Store all combined removals so they show up in the results collapsible panel
+      const combinedRemovals = [
+        ...silenceRemovals.map(r => ({
+          start: r.start,
+          end: r.end,
+          text: 'Silent pause / dead air',
+          reason: 'silence' as const
+        })),
+        ...repetitionRemovals
+      ];
       setAiRemovals(combinedRemovals);
 
       toast('Silence and repetitions successfully cleaned!', 'success');
@@ -261,7 +229,6 @@ function AppContent() {
     setSilenceReducedMp3Blob(null);
     setSilenceReducedDuration(0);
     setSilenceRemovals([]);
-    setKeepSegmentsState([]);
     
     setAiCleanedUrl(null);
     setAiCleanedWavBlob(null);
@@ -276,12 +243,15 @@ function AppContent() {
       <header className="header">
         <div className="logo-wrapper">
           <a href="#" className="logo-text" onClick={(e) => { e.preventDefault(); handleReset(); }}>
-            Voice<span>Cut</span>
+            <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="logo-icon-svg">
+              <circle cx="16" cy="16" r="16" fill="#E6553A" />
+              <path d="M16 8V24M11 12V20M21 12V20M7 14V18M25 14V18" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
+            </svg>
+            VoiceCut
           </a>
         </div>
-        <div className="private-badge">
-          <ShieldCheck size={14} />
-          100% Private
+        <div className="private-badge-text">
+          100% private · in-browser
         </div>
       </header>
 
@@ -291,11 +261,13 @@ function AppContent() {
           <>
             <div className="hero">
               <span className="hero-badge">Free · No sign-up</span>
-              <h1 className="hero-title">
-                Cut the pauses. <span>Keep the message.</span>
+              <h1 className="hero-title mt-5 font-display text-5xl sm:text-6xl tracking-tight text-ink">
+                Cut the pauses.
+                <br />
+                <span className="text-brand">Keep the message.</span>
               </h1>
-              <p className="hero-subtitle">
-                VoiceCut automatically removes silent gaps, dead air, and breaths from your voice recordings.
+              <p className="hero-subtitle mx-auto mt-5 max-w-xl text-base sm:text-lg text-ink-muted">
+                VoiceCut automatically removes silent gaps, dead air, and breaths from your recordings. Upload, clean, download — all in your browser.
               </p>
             </div>
             
