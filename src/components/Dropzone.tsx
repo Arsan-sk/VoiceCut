@@ -96,6 +96,10 @@ export const Dropzone: React.FC<DropzoneProps> = ({ onFileSelected }) => {
         <button type="button" className="btn btn-primary" onClick={onButtonClick}>
           Select file
         </button>
+
+        <div className="supported-formats-hint">
+          MP3 · WAV · M4A · MP4 · up to 100 MB
+        </div>
       </div>
     </div>
   );

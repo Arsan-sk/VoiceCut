@@ -272,6 +272,24 @@ function AppContent() {
             </div>
             
             <Dropzone onFileSelected={handleFileSelected} />
+
+            <div className="landing-steps-grid">
+              <div className="landing-step-item">
+                <div className="landing-step-number">1</div>
+                <h3 className="landing-step-title">Upload</h3>
+                <p className="landing-step-desc">Drag in an MP3, WAV, M4A, or MP4.</p>
+              </div>
+              <div className="landing-step-item">
+                <div className="landing-step-number">2</div>
+                <h3 className="landing-step-title">Clean</h3>
+                <p className="landing-step-desc">VoiceCut trims silences, dead air, and breaths.</p>
+              </div>
+              <div className="landing-step-item">
+                <div className="landing-step-number">3</div>
+                <h3 className="landing-step-title">Download</h3>
+                <p className="landing-step-desc">Grab the cleaned file as MP3 or WAV.</p>
+              </div>
+            </div>
           </>
         )}
 
