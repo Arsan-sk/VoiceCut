@@ -319,6 +319,68 @@ function AppContent() {
                 <p className="landing-step-desc">Grab the cleaned file as MP3 or WAV.</p>
               </div>
             </div>
+
+            <section className="seo-content" aria-labelledby="why-voicecut-heading">
+              <div className="seo-content-intro">
+                <p className="section-eyebrow">AI audio cleanup, without the busywork</p>
+                <h2 id="why-voicecut-heading">The simple way to remove silence from audio online</h2>
+                <p>
+                  VoiceCut is a browser-based AI audio editor for creators who want clean,
+                  natural-sounding recordings without manually hunting through a timeline.
+                  It automatically cuts long pauses, dead air, breaths, filler words, stutters,
+                  and repeated phrases from voice recordings.
+                </p>
+              </div>
+
+              <div className="seo-benefits-grid">
+                <article>
+                  <h3>Clean podcasts and voiceovers faster</h3>
+                  <p>
+                    Shorten podcast interviews, YouTube narration, lessons, and voiceovers
+                    while keeping the message and natural flow intact.
+                  </p>
+                </article>
+                <article>
+                  <h3>Automatic voice cutting in your browser</h3>
+                  <p>
+                    Upload an MP3, WAV, M4A, or MP4 file and let VoiceCut detect speech
+                    segments and stitch them together with smooth audio boundaries.
+                  </p>
+                </article>
+                <article>
+                  <h3>Private by design</h3>
+                  <p>
+                    Standard silence removal runs locally in your browser, so you can clean
+                    a recording without creating an account or sending the file to a server.
+                  </p>
+                </article>
+              </div>
+
+              <div className="seo-faq" id="faq">
+                <h2>Frequently asked questions</h2>
+                <details>
+                  <summary>What does VoiceCut remove from a recording?</summary>
+                  <p>
+                    VoiceCut can remove silent gaps, dead air, breaths, filler words, stutters,
+                    repeated words, and other speech inconsistencies from a voice recording.
+                  </p>
+                </details>
+                <details>
+                  <summary>Is VoiceCut free and private?</summary>
+                  <p>
+                    Yes. The silence-cutting workflow is free and runs in your browser. Your
+                    selected audio file is not uploaded for the standard cleanup workflow.
+                  </p>
+                </details>
+                <details>
+                  <summary>Which audio formats does VoiceCut support?</summary>
+                  <p>
+                    VoiceCut accepts MP3, WAV, M4A, and MP4 files up to 100 MB, and exports
+                    cleaned audio as MP3 or WAV.
+                  </p>
+                </details>
+              </div>
+            </section>
           </>
         )}
 

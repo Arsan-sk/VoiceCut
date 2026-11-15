@@ -136,6 +136,91 @@ body {
   color: var(--ink-muted);
 }
 
+.seo-content {
+  margin-top: 5rem;
+  padding: 0 0.5rem;
+}
+
+.seo-content-intro {
+  max-width: 42rem;
+  margin: 0 auto 2.5rem;
+  text-align: center;
+}
+
+.section-eyebrow {
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.75rem;
+}
+
+.seo-content h2 {
+  font-family: var(--font-display);
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  line-height: 1.1;
+  margin-bottom: 1rem;
+}
+
+.seo-content h3 {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  line-height: 1.2;
+  margin-bottom: 0.65rem;
+}
+
+.seo-content p {
+  color: var(--color-muted);
+}
+
+.seo-benefits-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 4rem;
+}
+
+.seo-benefits-grid article {
+  border-top: 2px solid var(--color-border);
+  padding: 1.25rem 0.25rem 0;
+}
+
+.seo-faq {
+  max-width: 42rem;
+  margin: 0 auto;
+}
+
+.seo-faq h2 {
+  font-size: 1.75rem;
+  text-align: center;
+}
+
+.seo-faq details {
+  border-top: 1px solid var(--color-border);
+  padding: 1rem 0;
+}
+
+.seo-faq details:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.seo-faq summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.seo-faq details p {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .seo-benefits-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+}
+
 @media (min-width: 640px) {
   .hero-subtitle {
     font-size: 1.125rem;
